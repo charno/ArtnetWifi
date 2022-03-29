@@ -26,7 +26,7 @@ THE SOFTWARE.
 */
 
 #include <ArtnetWifi.h>
-
+#include <lwip/sockets.h>
 
 const char ArtnetWifi::artnetId[] = ART_NET_ID;
 
@@ -34,20 +34,58 @@ ArtnetWifi::ArtnetWifi() {}
 
 void ArtnetWifi::begin(String hostname)
 {
-  Udp.begin(ART_NET_PORT);
   host = hostname;
   sequence = 1;
   physical = 0;
+
+  // Create socket
+  if ((udp_server=socket(AF_INET, SOCK_DGRAM, 0)) == -1){
+    log_e("could not create socket: %d", errno);
+    return;
+  }
+
+  // Bind
+  int yes = 1;
+  if (setsockopt(udp_server,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof(yes)) < 0) {
+    log_e("could not set socket option: %d", errno);
+    if(udp_server != -1)
+    {
+      close(udp_server);
+      udp_server = -1;
+    }
+    return;
+  }
+
+  struct sockaddr_in addr;
+  memset((char *) &addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(ART_NET_PORT);
+  addr.sin_addr.s_addr = 0x00000000;
+  if(bind(udp_server , (struct sockaddr*)&addr, sizeof(addr)) == -1){
+    log_e("could not bind socket: %d", errno);
+    if(udp_server != -1)
+    {
+      close(udp_server);
+      udp_server = -1;
+    }
+    return;
+  }
+  fcntl(udp_server, F_SETFL, O_NONBLOCK);
+
+
 }
 
 uint16_t ArtnetWifi::read(void)
 {
-  packetSize = Udp.parsePacket();
+  struct sockaddr_in si_other;
+  int slen = sizeof(si_other);
 
-  if (packetSize <= MAX_BUFFER_ARTNET && packetSize > 0)
+  int len = recvfrom(udp_server, artnetPacket, MAX_BUFFER_ARTNET, MSG_DONTWAIT, (struct sockaddr *) &si_other, (socklen_t *)&slen);
+
+
+  if (len <= MAX_BUFFER_ARTNET && len > 0)
   {
-      senderIp =  Udp.remoteIP();
-      Udp.read(artnetPacket, MAX_BUFFER_ARTNET);
+      senderIp =  IPAddress(si_other.sin_addr.s_addr);
 
       // Check that packetID is "Art-Net" else ignore
       if (memcmp(artnetPacket, artnetId, sizeof(artnetId)) != 0) {
@@ -79,84 +117,4 @@ uint16_t ArtnetWifi::read(void)
   }
 
   return 0;
-}
-
-uint16_t ArtnetWifi::makePacket(void)
-{
-  uint16_t len;
-  uint16_t version;
-
-  memcpy(artnetPacket, artnetId, sizeof(artnetId));
-  opcode = ART_DMX;
-  artnetPacket[8] = opcode;
-  artnetPacket[9] = opcode >> 8;
-  version = 14;
-  artnetPacket[11] = version;
-  artnetPacket[10] = version >> 8;
-  artnetPacket[12] = sequence;
-  sequence++;
-  if (!sequence) {
-    sequence = 1;
-  }
-  artnetPacket[13] = physical;
-  artnetPacket[14] = outgoingUniverse;
-  artnetPacket[15] = outgoingUniverse >> 8;
-  len = dmxDataLength + (dmxDataLength % 2); // make a even number
-  artnetPacket[17] = len;
-  artnetPacket[16] = len >> 8;
-
-  return len;
-}
-
-int ArtnetWifi::write(void)
-{
-  uint16_t len;
-
-  len = makePacket();
-  Udp.beginPacket(host.c_str(), ART_NET_PORT);
-  Udp.write(artnetPacket, ART_DMX_START + len);
-
-  return Udp.endPacket();
-}
-
-int ArtnetWifi::write(IPAddress ip)
-{
-  uint16_t len;
-
-  len = makePacket();
-  Udp.beginPacket(ip, ART_NET_PORT);
-  Udp.write(artnetPacket, ART_DMX_START + len);
-
-  return Udp.endPacket();
-}
-
-void ArtnetWifi::setByte(uint16_t pos, uint8_t value)
-{
-  if (pos > 512) {
-    return;
-  }
-  artnetPacket[ART_DMX_START + pos] = value;
-}
-
-void ArtnetWifi::printPacketHeader(void)
-{
-  Serial.print("packet size = ");
-  Serial.print(packetSize);
-  Serial.print("\topcode = ");
-  Serial.print(opcode, HEX);
-  Serial.print("\tuniverse number = ");
-  Serial.print(incomingUniverse);
-  Serial.print("\tdata length = ");
-  Serial.print(dmxDataLength);
-  Serial.print("\tsequence n0. = ");
-  Serial.println(sequence);
-}
-
-void ArtnetWifi::printPacketContent(void)
-{
-  for (uint16_t i = ART_DMX_START ; i < dmxDataLength ; i++){
-    Serial.print(artnetPacket[i], DEC);
-    Serial.print("  ");
-  }
-  Serial.println('\n');
 }

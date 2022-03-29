@@ -28,6 +28,8 @@ THE SOFTWARE.
 #ifndef ARTNET_WIFI_H
 #define ARTNET_WIFI_H
 
+#define ESP32
+
 #include <functional>
 #include <Arduino.h>
 #if defined(ARDUINO_ARCH_ESP32) || defined(ESP32)
@@ -139,7 +141,7 @@ public:
 private:
   uint16_t makePacket(void);
 
-  WiFiUDP Udp;
+  int udp_server;
   String host;
   uint8_t artnetPacket[MAX_BUFFER_ARTNET];
   uint16_t packetSize;
